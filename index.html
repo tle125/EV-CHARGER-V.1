@@ -77,8 +77,6 @@
             50% { transform: translate(-50%, -50%) scale(1.2); }
         }
     </style>
-<link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#0d9488">
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
     <!-- Login Overlay -->
@@ -461,7 +459,79 @@
             }
         }
 
-        async function setupLoginScreen() {
+        
+// --- DAILY ROUND REMINDERS (11:50, 16:50, 23:50) ---
+const ROUND_TIMES = ['11:50', '16:50', '23:50'];
+
+function startDailyRoundReminders() {
+  try {
+    // run immediately and then every 30 seconds
+    checkRoundTimes();
+    if (window.__roundReminderTimer) clearInterval(window.__roundReminderTimer);
+    window.__roundReminderTimer = setInterval(checkRoundTimes, 30 * 1000);
+    console.log('Round reminders active for times:', ROUND_TIMES.join(', '));
+  } catch (e) {
+    console.error('startDailyRoundReminders error:', e);
+  }
+}
+
+function checkRoundTimes() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth()+1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const todayKey = `${y}${m}${d}`;
+
+  ROUND_TIMES.forEach(t => {
+    const [hh, mm] = t.split(':').map(Number);
+    const target = new Date(now);
+    target.setHours(hh, mm, 0, 0);
+
+    // Fire once when we're within this 60s window and not already reminded
+    const diff = now - target; // ms
+    const alreadyKey = `reminded-${todayKey}-${hh}${String(mm).padStart(2,'0')}`;
+
+    if (diff >= 0 && diff < 60 * 1000) {
+      if (localStorage.getItem(alreadyKey) !== '1') {
+        showRoundReminderNotification(t);
+        localStorage.setItem(alreadyKey, '1');
+      }
+    }
+    // New day reset occurs naturally due to date-based key
+  });
+}
+
+function showRoundReminderNotification(timeStr) {
+  const title = 'ถึงรอบเวลาชาร์จ';
+  const body = `เตือนรอบเวลา ${timeStr} น.`;
+
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (reg && Notification.permission === 'granted') {
+        reg.showNotification(title, {
+          body,
+          icon: './icon-192.png',
+          badge: './icon-192.png',
+          tag: `round-${timeStr.replace(':','')}`,
+          renotify: true
+        });
+      }
+    });
+  }
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification(title, { body, icon: './icon-192.png' }); } catch {}
+  }
+  if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 740; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
+    o.start(); setTimeout(()=>{ g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05); o.stop(); ctx.close(); }, 450);
+  } catch (e) { console.debug('Reminder beep failed:', e); }
+}
+async function setupLoginScreen() {
             const usersColRef = collection(db, `artifacts/${appId}/users`);
             const userSnapshot = await getDocs(usersColRef);
             const userSelect = document.getElementById('login-user');
@@ -587,6 +657,7 @@
                 setupRealtimeListeners();
                 initializeUI();
                 requestNotificationPermission();
+                startDailyRoundReminders();
 
                 if (currentUser.role === 'employee') {
                     prepopulateForm(currentUser.vehicle, currentUser.charger);
@@ -1711,11 +1782,5 @@
             return timeString ? timeString.slice(0, 5) : '-';
         }
     </script>
-
-<script>
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js");
-}
-</script>
 </body>
 </html>
